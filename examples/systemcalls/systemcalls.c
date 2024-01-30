@@ -4,7 +4,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
-
+#include <fcntl.h>
+#include <sys/stat.h>
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -62,30 +63,27 @@ bool do_exec(int count, ...)
     pid_t pid;
     bool b_result = false;
     char *p_char = NULL;
-    
-    for(i=0; i<count; i++)
+      
+    for (i = 0; i < count; i++)
     {
-        if(i==0)
+      if(i==0)
+      {
+        p_path = va_arg(args, char *);
+
+        p_char = strrchr(p_path,'/');
+        if(NULL != p_char)
         {
-          p_path = va_arg(args, char *);
-          
-          //printf("p_path:%s\n", p_path);
-          p_char = strrchr(p_path,'/');
-          if(NULL != p_char)
-          {
-            command[i] = (p_char + 1);
-          }
-          else
-          {
-            //printf("No explicit path\n");
-            command[i] = p_path;
-          }
+          command[i] = (p_char + 1);
         }
         else
         {
-          command[i] = va_arg(args, char *);
+          command[i] = p_path;
         }
-        //printf("command[%d]=%s\n",i, command[i]);
+      }
+      else
+      {
+        command[i] = va_arg(args, char *);
+      }
     }
     command[count] = NULL;
     
@@ -106,6 +104,7 @@ bool do_exec(int count, ...)
     if(pid == -1)
     {
       perror("do_exec, fork()");
+      return false;
     }
     else if(pid == 0)
     {
@@ -114,33 +113,25 @@ bool do_exec(int count, ...)
 
       if(status == -1)
       {
-         perror("do_exec, execv(), "); 
+        perror("do_exec, execv(), ");
       }
-      else
-      {
-        b_result = true;
-      }
+      exit(status);
     }
     else
     {
       int child_status;
       /* Parent process */
       pid_t this_pid = waitpid(pid,&child_status,0);
-
       if(this_pid == -1)
       {
         perror("do_exec, wait(), ");
       }
-      else if( WIFEXITED(child_status) )
+      else if(child_status == 0)
       {
-        /* command terminated normally, check exit status */
-        if( WEXITSTATUS(child_status) == EXIT_SUCCESS )
-        {
-          b_result = true;
-        }
+        b_result = true;
       }
+      
     }
-    
     return b_result;
 }
 
@@ -153,17 +144,14 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 {
     va_list args;
     va_start(args, count);
-    char * command[count+2];
+    char * command[count+1];
     int i;
     char *p_path = NULL;
     char *p_char = NULL;
     bool b_result = false;
     char *p_redirect_msg = NULL;
-    char redirect_op[] = " > ";
+    
     pid_t pid;
-    
-    putenv("HOME=\"\"");
-    
 
     for (i = 0; i < count; i++)
     {
@@ -171,7 +159,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
       {
           p_path = va_arg(args, char *);
 
-          //printf("do_exec_redirect(), p_path:%s\n", p_path);
           p_char = strrchr(p_path, '/');
           if (NULL != p_char)
           {
@@ -179,7 +166,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
           }
           else
           {
-            //  printf("do_exec_redirect(), No explicit path\n");
             command[i] = p_path;
           }
       }
@@ -187,25 +173,10 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
       {
         command[i] = va_arg(args, char *);
       }
-      //printf("command[%d]=%s\n", i, command[i]);
     }
     va_end(args);
-
-    p_redirect_msg = malloc(strlen(outputfile) + strlen(redirect_op));
-    if (NULL != p_redirect_msg)
-    {
-      strcpy(p_redirect_msg, redirect_op);
-      strcat(p_redirect_msg, outputfile);
-      command[count] = p_redirect_msg;
-      //printf("command[%d]=%s\n", count, command[i]);
-    }
-    else
-    {
-      printf("Memory allocation error\n");
-      return false;
-    }
-    
-    command[count+1] = NULL;
+  
+    command[count] = NULL;
     
 
 /*
@@ -225,16 +196,30 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     else if (pid == 0)
     {
       /* The child process */
-      int status = execv(p_path, command);
+      int status = 0;
+      int outfile_fd = open(outputfile, O_WRONLY | O_TRUNC | O_CREAT,
+                            S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH);
+
+      if(outfile_fd < 0)
+      {
+        perror("Failed to open file, ");
+        return false;
+      }
+
+      if(dup2(outfile_fd, 1) <= 0)
+      {
+          perror("do_exec_redirect, failed redirection, ");
+          return false;
+      }
+      close(outfile_fd);
+
+      status = execv(p_path, command);
 
       if (status == -1)
       {
         perror("do_exec_redirect, execvp(), ");
       }
-      else
-      {
-        b_result = true;
-      }
+      exit(status);
     }
     else
     {
@@ -249,14 +234,14 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         }
         else if (WIFEXITED(child_status))
         {
-            /* command terminated normally, check exit status */
-            if (WEXITSTATUS(child_status) == EXIT_SUCCESS)
-            {
-                b_result = true;
-            }
+          printf("child_status:%d\n",child_status);
+          /* command terminated normally, check exit status */
+           if (WEXITSTATUS(child_status) == EXIT_SUCCESS)
+           {
+             b_result = true;
+           }
         }
         free(p_redirect_msg);
     }
-
     return b_result;
 }
