@@ -1,4 +1,11 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <libgen.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
 
 /**
  * @param cmd the command to execute with system()
@@ -16,8 +23,12 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
-    return true;
+    int ret = system(cmd);
+    if(ret == 0)
+    {
+		return true;
+	}
+    return false;
 }
 
 /**
@@ -38,16 +49,20 @@ bool do_exec(int count, ...)
 {
     va_list args;
     va_start(args, count);
-    char * command[count+1];
+    char *command[count+1];
     int i;
+    pid_t pid;
+
+    
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
+        // printf("command[%d]: %s\n", i, command[i]);
     }
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 /*
  * TODO:
@@ -58,10 +73,39 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    fflush(stdout);
+    pid = fork();
+    if(pid == 0)
+    {
+	    // child process
+	    // pid_t my_pid = getpid();
+	    // pid_t my_parent_pid = getppid();
+      // printf("Child is created, my_pid:%d, my_parent_pid:%d\n", my_pid, my_parent_pid);
+      execv(command[0], command);
+    }
+    else
+    {
+      int status; 
+      pid_t chld_pid = wait(&status);
+  	  // printf("This is parent, pid:%d, chld_pid:%d, WIFEXITED(status:%d):%d, WEXITSTATUS(status):%d\n", pid, chld_pid, status, WIFEXITED(status), WEXITSTATUS(status));
+	    
+      if( WIFEXITED(status) )
+      {
+        if( WEXITSTATUS(status) == 0 )
+        {
+          return true;
+        }
+      }
+	    
+	  if(chld_pid == -1)
+	  {
+        return false;
+      }
+	}
 
     va_end(args);
-
-    return true;
+    
+    return false;
 }
 
 /**
@@ -75,14 +119,66 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     va_start(args, count);
     char * command[count+1];
     int i;
+    pid_t pid;
+    
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    if( fd < 0 )
+    {
+		perror("Could not open the file");
+		return false;
+	}
+    
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
+        // printf("command[%d]: %s\n", i, command[i]);
     }
+    
+    // printf("output_file: %s\n", outputfile);
     command[count] = NULL;
+    
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    // command[count] = command[count];
+	
+    fflush(stdout);
+    pid = fork();
+    if(pid == 0)
+    {
+	  // Child
+	  if(dup2(fd, STDOUT_FILENO) < 0)
+	  {
+		  close(fd);
+		  perror("Failed dup2()");
+		  return false;
+	  }
+      if(execv(command[0], command))
+      {
+		  close(fd);
+		  return false;
+	  }
+    }
+    else
+    {
+      int status; 
+      pid_t chld_pid = wait(&status);
+	  // printf("This is parent, pid:%d, chld_pid:%d, WIFEXITED(status:%d):%d, WEXITSTATUS(status):%d\n", pid, chld_pid, status, WIFEXITED(status), WEXITSTATUS(status));
+	  close(fd);
+	    
+      if( WIFEXITED(status) )
+      {
+        if( WEXITSTATUS(status) == 0 )
+        {
+          return true;
+        }
+        return false;
+      }
+	    
+	  if(chld_pid == -1)
+	  {
+        return false;
+      }		
+    }
 
 
 /*
@@ -95,5 +191,5 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 
     va_end(args);
 
-    return true;
+    return false;
 }
